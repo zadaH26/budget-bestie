@@ -1,0 +1,11 @@
+name = "budget-bestie-ai"
+main = "worker.mjs"
+compatibility_date = "2026-03-15"
+
+[vars]
+AI_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+PARSER_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+
+# Bind Workers AI in the Cloudflare dashboard or wrangler config:
+# [ai]
+# binding = "AI"

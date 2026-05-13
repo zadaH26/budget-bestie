@@ -1,0 +1,14 @@
+name = "budget-bestie-state-zadah"
+main = "state-worker.mjs"
+compatibility_date = "2026-05-12"
+
+[vars]
+CORS_ALLOW_ORIGIN = "*"
+
+[[durable_objects.bindings]]
+name = "STATE_STORE"
+class_name = "StateStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["StateStore"]
