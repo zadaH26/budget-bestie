@@ -21,6 +21,11 @@ export type CloudUser = {
   email: string | null;
 };
 
+function normalizeCloudPassword(password: string): string {
+  // Keep short legacy-style passwords working in cloud mode while satisfying provider minimum length.
+  return password.length < 6 ? `${password}__bb_cloud__` : password;
+}
+
 export async function getCloudUser(): Promise<CloudUser | null> {
   if (!supabase) return null;
   const { data, error } = await supabase.auth.getUser();
@@ -30,13 +35,13 @@ export async function getCloudUser(): Promise<CloudUser | null> {
 
 export async function signInCloud(email: string, password: string): Promise<void> {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await supabase.auth.signInWithPassword({ email, password: normalizeCloudPassword(password) });
   if (error) throw error;
 }
 
 export async function signUpCloud(email: string, password: string): Promise<void> {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.auth.signUp({ email, password });
+  const { error } = await supabase.auth.signUp({ email, password: normalizeCloudPassword(password) });
   if (error) throw error;
 }
 

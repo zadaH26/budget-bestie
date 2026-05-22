@@ -54,6 +54,7 @@ import {
   Sun,
   Moon,
   UserRound,
+  PiggyBank,
 } from "lucide-react";
 
 /** ---------- Types ---------- */
@@ -139,6 +140,8 @@ type AccountData = {
   excludeInvestingSavingsFromCharts: boolean;
   chartCategoryFilter: string;
   learnedCategoryRules: Record<string, string>;
+  savingsTrackerGoal: number;
+  savingsTrackerSaved: number;
 };
 type StoredAccount = {
   id: string;
@@ -553,6 +556,11 @@ function normalizeAccountId(name: string) {
     .replace(/[^a-z0-9_.-]/g, "");
 }
 
+function usernameToCloudEmail(usernameInput: string) {
+  const normalized = normalizeAccountId(usernameInput);
+  return normalized ? `${normalized}@budgetbestie.app` : "";
+}
+
 function defaultAccountData(): AccountData {
   return {
     categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
@@ -583,6 +591,8 @@ function defaultAccountData(): AccountData {
     excludeInvestingSavingsFromCharts: true,
     chartCategoryFilter: "all",
     learnedCategoryRules: {},
+    savingsTrackerGoal: 0,
+    savingsTrackerSaved: 0,
   };
 }
 
@@ -685,7 +695,7 @@ function sanitizeBrandText(value: unknown, fallback: string, maxLen: number) {
 
 function isLikelyMojibakeText(value: string): boolean {
   // Common UTF-8 -> latin1 corruption markers (e.g. "ðŸ’¸", "Ã¢â‚¬").
-  return /[\uFFFD]|Ã|Â|ð|Ÿ|™|œ|ž/.test(value);
+  return /[\uFFFD]|Ã|Â|ð|Ÿ|™|œ|ž|ï|¸|¢|¤|½/.test(value);
 }
 
 function repairMojibakeText(value: string): string {
@@ -718,6 +728,7 @@ function sanitizeCategoryIcon(rawIcon: unknown, categoryId: string, categoryName
   const icon = repairMojibakeText(rawIcon).trim();
   if (!icon) return fallback;
   if (isLikelyMojibakeText(icon)) return fallback;
+  if (icon.length > 12) return fallback;
   return icon;
 }
 
@@ -797,6 +808,8 @@ function sanitizeAccountData(raw: unknown): AccountData {
       typeof raw.excludeInvestingSavingsFromCharts === "boolean" ? raw.excludeInvestingSavingsFromCharts : true,
     chartCategoryFilter: typeof raw.chartCategoryFilter === "string" ? raw.chartCategoryFilter : "all",
     learnedCategoryRules: sanitizeLearnedRules(raw.learnedCategoryRules),
+    savingsTrackerGoal: clampNumber(raw.savingsTrackerGoal, 0, 1_000_000_000, 0),
+    savingsTrackerSaved: clampNumber(raw.savingsTrackerSaved, 0, 1_000_000_000, 0),
   };
 }
 
@@ -1017,6 +1030,18 @@ function isPersistedStateEmpty(state: PersistedAppState) {
   return !state.currentUserId && Object.keys(state.accounts).length === 0;
 }
 
+function persistedStateExpenseCount(state: PersistedAppState | null): number {
+  if (!state) return 0;
+  try {
+    return Object.values(state.accounts || {}).reduce((sum, account) => {
+      const count = Array.isArray(account?.data?.expenses) ? account.data.expenses.length : 0;
+      return sum + count;
+    }, 0);
+  } catch {
+    return 0;
+  }
+}
+
 function ensureStateHasDefaultAccount(state: PersistedAppState, displayName?: string | null): PersistedAppState {
   if (!isPersistedStateEmpty(state)) {
     if (state.currentUserId && state.accounts[state.currentUserId]) return state;
@@ -1071,12 +1096,14 @@ function cloudErrorSummary(error: unknown): string {
 function isCloudQuotaLimitError(error: unknown): boolean {
   const text = cloudErrorSummary(error).toLowerCase();
   if (!text) return false;
-  if (/\b(402|429)\b/.test(text)) return true;
+  if (/\b402\b/.test(text)) return true;
+  if (text.includes("email rate limit exceeded")) return false;
+  if (text.includes("rate limit")) return false;
+  if (text.includes("too many requests")) return false;
+  if (/\b429\b/.test(text)) return false;
 
   return [
     "quota",
-    "rate limit",
-    "too many requests",
     "resource exhausted",
     "usage limit",
     "limit reached",
@@ -2516,7 +2543,7 @@ function AppShell() {
   const [cloudUser, setCloudUser] = useState<CloudUser | null>(null);
   const [isCloudReady, setIsCloudReady] = useState(!cloudEnabled);
   const [cloudAuthMode, setCloudAuthMode] = useState<"signin" | "create">("signin");
-  const [cloudEmail, setCloudEmail] = useState("");
+  const [cloudUsername, setCloudUsername] = useState("");
   const [cloudPassword, setCloudPassword] = useState("");
   const [cloudError, setCloudError] = useState("");
   const [isCloudAuthBusy, setIsCloudAuthBusy] = useState(false);
@@ -2560,6 +2587,8 @@ function AppShell() {
   const [excludeInvestingSavingsFromCharts, setExcludeInvestingSavingsFromCharts] = useState(true);
   const [chartCategoryFilter, setChartCategoryFilter] = useState<string>("all");
   const [learnedCategoryRules, setLearnedCategoryRules] = useState<Record<string, string>>({});
+  const [savingsTrackerGoal, setSavingsTrackerGoal] = useState(0);
+  const [savingsTrackerSaved, setSavingsTrackerSaved] = useState(0);
 
   const [deleteFrom, setDeleteFrom] = useState<string>("");
   const [deleteTo, setDeleteTo] = useState<string>("");
@@ -2576,7 +2605,7 @@ function AppShell() {
     panel2: sanitizeHexColor(colorPanel2, basePalette.panel2),
     card: sanitizeHexColor(colorCard, basePalette.card),
   };
-  const allThemePresets = useMemo(() => [...THEME_PRESETS, ...customThemes], [customThemes]);
+  const allThemePresets = useMemo(() => [...customThemes, ...THEME_PRESETS], [customThemes]);
   const activeThemePresetId = resolveActiveThemePresetId(
     themeMode,
     PALETTE.accent,
@@ -2641,7 +2670,7 @@ function AppShell() {
         const user = await getCloudUser();
         if (cancelled) return;
         setCloudUser(user);
-        if (user?.email) setCloudEmail(user.email);
+        if (user?.email) setCloudUsername(user.email.split("@")[0] || "");
       } catch (error) {
         if (isCloudQuotaLimitError(error)) {
           if (cancelled) return;
@@ -2705,10 +2734,16 @@ function AppShell() {
           }
         }
 
+        const cloudCount = persistedStateExpenseCount(cloudState);
+        const localCount = persistedStateExpenseCount(localState);
+        const hasCloud = Boolean(cloudState && !isPersistedStateEmpty(cloudState));
+        const hasLocal = Boolean(!isPersistedStateEmpty(localState));
+        const shouldPreferLocal = hasLocal && (!hasCloud || localCount > cloudCount);
+
         const chosen =
-          cloudState && !isPersistedStateEmpty(cloudState)
-            ? cloudState
-            : !isPersistedStateEmpty(localState)
+          hasCloud && !shouldPreferLocal
+            ? cloudState!
+            : hasLocal
               ? localState
               : ensureStateHasDefaultAccount(
                   { version: 2, currentUserId: null, accounts: {} },
@@ -2721,7 +2756,7 @@ function AppShell() {
         setCurrentUserId(hydrated.currentUserId);
         setIsStorageReady(true);
 
-        if (!cloudState || isPersistedStateEmpty(cloudState)) {
+        if (!cloudState || isPersistedStateEmpty(cloudState) || shouldPreferLocal) {
           void saveCloudStateJson(cloudUser.id, hydrated).catch((error) => {
             if (isCloudQuotaLimitError(error)) {
               pauseCloudSyncFromQuota(error, "Cloud initialization save paused due to quota.");
@@ -2805,6 +2840,8 @@ function AppShell() {
     setExcludeInvestingSavingsFromCharts(data.excludeInvestingSavingsFromCharts);
     setChartCategoryFilter(data.chartCategoryFilter);
     setLearnedCategoryRules(data.learnedCategoryRules);
+    setSavingsTrackerGoal(data.savingsTrackerGoal);
+    setSavingsTrackerSaved(data.savingsTrackerSaved);
     setDeleteFrom("");
     setDeleteTo("");
     setIsAccountReady(true);
@@ -2850,6 +2887,8 @@ function AppShell() {
             excludeInvestingSavingsFromCharts,
             chartCategoryFilter,
             learnedCategoryRules,
+            savingsTrackerGoal,
+            savingsTrackerSaved,
           },
         },
       };
@@ -2886,6 +2925,8 @@ function AppShell() {
     excludeInvestingSavingsFromCharts,
     chartCategoryFilter,
     learnedCategoryRules,
+    savingsTrackerGoal,
+    savingsTrackerSaved,
   ]);
 
   // Persist account container.
@@ -2932,8 +2973,8 @@ function AppShell() {
       setAuthError("That username already exists. Sign in instead.");
       return;
     }
-    if (authPassword.length < 6) {
-      setAuthError("Password must be at least 6 characters.");
+    if (!authPassword.trim()) {
+      setAuthError("Enter a password.");
       return;
     }
 
@@ -3010,28 +3051,44 @@ function AppShell() {
       setCloudError(cloudPauseReason || "Cloud sync is paused due to free-tier limits.");
       return;
     }
-    const email = cloudEmail.trim().toLowerCase();
-    if (!email || !email.includes("@")) {
-      setCloudError("Enter a valid email.");
+    const username = normalizeAccountId(cloudUsername);
+    if (!username) {
+      setCloudError("Enter a valid username.");
       return;
     }
-    if (cloudPassword.length < 6) {
-      setCloudError("Password must be at least 6 characters.");
+    const email = usernameToCloudEmail(username);
+    if (!cloudPassword.trim()) {
+      setCloudError("Enter a password.");
       return;
     }
 
     setIsCloudAuthBusy(true);
     setCloudError("");
     try {
-      if (cloudAuthMode === "create") await signUpCloud(email, cloudPassword);
-      else await signInCloud(email, cloudPassword);
+      if (cloudAuthMode === "create") {
+        await signUpCloud(email, cloudPassword);
+        await signInCloud(email, cloudPassword);
+      } else {
+        await signInCloud(email, cloudPassword);
+      }
       setCloudPassword("");
     } catch (error) {
       if (isCloudQuotaLimitError(error)) {
         pauseCloudSyncFromQuota(error, "Cloud auth paused due to quota.");
         return;
       }
-      setCloudError(error instanceof Error ? error.message : "Could not authenticate.");
+      const msg = cloudErrorSummary(error).toLowerCase();
+      if (msg.includes("user already registered")) {
+        setCloudError("Incorrect password.");
+      } else if (msg.includes("email not confirmed") || msg.includes("email_not_confirmed")) {
+        setCloudError("Cloud auth setting is blocking sign-in: Email confirmation is enabled in Supabase. Disable it once, then sign in again.");
+      } else if (msg.includes("invalid login credentials")) {
+        setCloudError("Incorrect password.");
+      } else if (msg.includes("email rate limit exceeded") || msg.includes("too many requests") || msg.includes("rate limit")) {
+        setCloudError("Incorrect password.");
+      } else {
+        setCloudError(error instanceof Error ? error.message : "Could not authenticate.");
+      }
     } finally {
       setIsCloudAuthBusy(false);
     }
@@ -3063,12 +3120,14 @@ function AppShell() {
     search?: string;
     from?: string;
     to?: string;
+    focusSearch?: boolean;
   }) {
     const params = new URLSearchParams();
     if (filters.categoryId && filters.categoryId !== "all") params.set("category", filters.categoryId);
     if (filters.search) params.set("q", filters.search);
     if (filters.from) params.set("from", filters.from);
     if (filters.to) params.set("to", filters.to);
+    if (filters.focusSearch) params.set("focusSearch", "1");
     nav(`/expenses${params.toString() ? `?${params.toString()}` : ""}`);
   }
 
@@ -3612,6 +3671,71 @@ function AppShell() {
 
   /** ---------- Pages ---------- */
   function Dashboard() {
+    const totalBudgetLimit = budgets
+      .filter((b) => b.period === "monthly")
+      .reduce((sum, b) => sum + Math.max(0, b.amount), 0);
+    const budgetUsagePct = totalBudgetLimit > 0 ? Math.min(100, (totals.spent / totalBudgetLimit) * 100) : 0;
+    const savedAmount = filteredExpenses
+      .filter((e) => e.amount < 0 && isInvestingOrSavingsTransaction(e))
+      .reduce((sum, e) => sum + Math.abs(e.amount), 0);
+    const trackerGoal = Math.max(0, savingsTrackerGoal);
+    const trackerSaved = Math.max(0, savingsTrackerSaved);
+    const savingsProgressPct = trackerGoal > 0 ? Math.min(100, (trackerSaved / trackerGoal) * 100) : 0;
+    const trackerLeft = Math.max(0, trackerGoal - trackerSaved);
+    const savingsGoalName = "Savings Goal";
+    const recentActivity = filteredExpenses
+      .slice()
+      .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
+      .slice(0, 3);
+    const [goalInput, setGoalInput] = useState(() => String(Math.round(trackerGoal)));
+    const [addInput, setAddInput] = useState("");
+    const [savingsHint, setSavingsHint] = useState("");
+
+    useEffect(() => {
+      setGoalInput(String(Math.round(Math.max(0, trackerGoal))));
+    }, [trackerGoal]);
+
+    function parseSavingsTrackerInput(raw: string) {
+      const normalized = raw.replace(/[^0-9.]/g, "");
+      const n = Number(normalized);
+      if (!Number.isFinite(n)) return 0;
+      return Math.max(0, n);
+    }
+
+    function saveSavingsGoal() {
+      const nextGoal = parseSavingsTrackerInput(goalInput);
+      setSavingsTrackerGoal(nextGoal);
+      setSavingsHint(`Goal saved: ${formatMoney(nextGoal)}`);
+    }
+
+    function addToSavingsTracker() {
+      const add = parseSavingsTrackerInput(addInput);
+      if (add <= 0) {
+        setSavingsHint("Enter an amount first, then tap Add amount.");
+        return;
+      }
+      setSavingsTrackerSaved((prev) => Math.max(0, prev + add));
+      setAddInput("");
+      setSavingsHint(`Added ${formatMoney(add)} to saved amount.`);
+    }
+
+    function useFromSavingsTracker() {
+      const used = parseSavingsTrackerInput(addInput);
+      if (used <= 0) {
+        setSavingsHint("Enter an amount first, then tap Subtract amount.");
+        return;
+      }
+      setSavingsTrackerSaved((prev) => Math.max(0, prev - used));
+      setAddInput("");
+      setSavingsHint(`Subtracted ${formatMoney(used)} from saved amount.`);
+    }
+
+    function resetSavingsTracker() {
+      setSavingsTrackerSaved(0);
+      setAddInput("");
+      setSavingsHint("Saved amount reset to $0.00.");
+    }
+
     const metricCards = [
       { label: "Total Spending", value: formatMoney(totals.spent) },
       { label: "Total Income (pay/deposits)", value: formatMoney(totals.income) },
@@ -3620,7 +3744,7 @@ function AppShell() {
     ];
 
     return (
-      <div>
+      <div className="bb-dashboard-page">
         <PageTitle
           title="Dashboard"
           subtitle="Totals + advisor + charts (filtered)."
@@ -3667,6 +3791,145 @@ function AppShell() {
             </div>
           }
         />
+
+        <div className="bb-mobile-overview-card" style={{ ...s.card, marginTop: 4 }}>
+          <div style={{ fontSize: 12, fontWeight: 850, letterSpacing: 0.35, color: colorWithAlpha(PALETTE.text, 0.76) }}>
+            TOTAL BALANCE
+          </div>
+          <div style={{ fontSize: 40, fontWeight: 980, marginTop: 4 }}>{formatMoney(totals.net)}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
+            <div style={{ ...s.card, padding: 10, background: colorWithAlpha(PALETTE.good, 0.12) }}>
+              <div style={{ fontSize: 12, fontWeight: 820, color: PALETTE.muted }}>Income</div>
+              <div style={{ marginTop: 4, fontSize: 23, fontWeight: 960, color: PALETTE.good }}>{formatMoney(totals.income)}</div>
+            </div>
+            <div style={{ ...s.card, padding: 10, background: colorWithAlpha(PALETTE.bad, 0.09) }}>
+              <div style={{ fontSize: 12, fontWeight: 820, color: PALETTE.muted }}>Expenses</div>
+              <div style={{ marginTop: 4, fontSize: 23, fontWeight: 960 }}>{formatMoney(totals.spent)}</div>
+            </div>
+          </div>
+          <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontWeight: 850 }}>
+              <span>Saved / Invested</span>
+              <span>{formatMoney(savedAmount)}</span>
+            </div>
+            <div style={{ height: 10, borderRadius: 999, background: colorWithAlpha(PALETTE.accent, 0.18), overflow: "hidden" }}>
+              <div
+                style={{
+                  height: "100%",
+                  width: `${Math.max(0, Math.min(100, budgetUsagePct))}%`,
+                  background: PALETTE.accent,
+                }}
+              />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, color: PALETTE.muted, fontWeight: 780 }}>
+              <span>Budget used {Math.round(budgetUsagePct)}%</span>
+              <span>Budget limit {totalBudgetLimit > 0 ? formatMoney(totalBudgetLimit) : "Not set"}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bb-mobile-smooth-stack">
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+              <div style={{ fontWeight: 930, fontSize: 16 }}>Recent Activity</div>
+              <button style={{ ...s.btnSecondary, padding: "7px 11px", fontSize: 12 }} onClick={() => nav("/expenses")}>
+                See all
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {recentActivity.length === 0 ? (
+                <div className="bb-mobile-soft-card" style={{ color: PALETTE.muted, fontWeight: 700 }}>
+                  Add transactions to see recent activity.
+                </div>
+              ) : (
+                recentActivity.map((tx) => {
+                  const category = catById.get(tx.categoryId);
+                  return (
+                    <div key={tx.id} className="bb-mobile-activity-row">
+                      <div className="bb-mobile-activity-icon">{category?.icon ?? "✨"}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{tx.notes}</div>
+                        <div style={{ fontSize: 12, color: PALETTE.muted, fontWeight: 700 }}>
+                          {category?.name ?? "Other"} • {tx.date}
+                        </div>
+                      </div>
+                      <div style={{ fontWeight: 900, color: tx.amount > 0 ? PALETTE.good : PALETTE.text }}>
+                        {tx.amount > 0 ? "+" : "-"}
+                        {formatMoney(Math.abs(tx.amount))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="bb-mobile-savings-grid">
+            <div className="bb-mobile-soft-card bb-mobile-goal-card">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div className="bb-mobile-goal-icon">
+                  <PiggyBank size={18} />
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 900, color: PALETTE.muted }}>SAVINGS TRACKER</div>
+              </div>
+              <div style={{ marginTop: 10, fontSize: 12, fontWeight: 900, color: PALETTE.muted }}>{savingsGoalName}</div>
+              <div style={{ marginTop: 4, fontSize: 31, fontWeight: 980 }}>{formatMoney(trackerSaved)}</div>
+              <div style={{ fontSize: 12, color: PALETTE.muted, fontWeight: 700 }}>
+                Saved of {formatMoney(trackerGoal)}
+              </div>
+              <div className="bb-mobile-progress-track" style={{ marginTop: 8 }}>
+                <div className="bb-mobile-progress-fill" style={{ width: `${Math.max(0, Math.min(100, savingsProgressPct))}%` }} />
+              </div>
+              <div style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
+                {formatMoney(trackerLeft)} left
+              </div>
+              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 11, color: PALETTE.muted, fontWeight: 800 }}>
+                  Set your target, type an amount, then add or subtract.
+                </div>
+                <div className="bb-savings-inputs">
+                  <input
+                    style={{ ...s.input, fontSize: 12, padding: "8px 10px" }}
+                    type="text"
+                    inputMode="decimal"
+                    value={goalInput}
+                    onChange={(e) => setGoalInput(e.target.value)}
+                    placeholder="Goal target"
+                  />
+                  <input
+                    style={{ ...s.input, fontSize: 12, padding: "8px 10px" }}
+                    type="text"
+                    inputMode="decimal"
+                    value={addInput}
+                    onChange={(e) => setAddInput(e.target.value)}
+                    placeholder="Amount (+/-)"
+                  />
+                </div>
+                <div className="bb-savings-buttons">
+                  <button style={{ ...s.btnSecondary, justifyContent: "center", padding: "9px 10px", fontSize: 12 }} onClick={saveSavingsGoal}>
+                    Set Goal Target
+                  </button>
+                  <button style={{ ...s.btnPrimary, justifyContent: "center", padding: "9px 10px", fontSize: 12 }} onClick={addToSavingsTracker}>
+                    Add Amount
+                  </button>
+                  <button
+                    style={{ ...s.btnSecondary, justifyContent: "center", padding: "9px 10px", fontSize: 12 }}
+                    onClick={useFromSavingsTracker}
+                  >
+                    Subtract Amount
+                  </button>
+                  <button
+                    style={{ ...s.btnSecondary, justifyContent: "center", padding: "9px 10px", fontSize: 12 }}
+                    onClick={resetSavingsTracker}
+                  >
+                    Reset Saved
+                  </button>
+                </div>
+                {savingsHint ? <div style={{ fontSize: 11, color: PALETTE.muted, fontWeight: 800 }}>{savingsHint}</div> : null}
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div style={{ ...s.grid3, marginTop: 4 }}>
           {metricCards.map((card, idx) => (
@@ -3805,6 +4068,7 @@ function AppShell() {
     const location = useLocation();
     const [categoryFilter, setCategoryFilter] = useState<string>("all");
     const [search, setSearch] = useState("");
+    const searchInputRef = useRef<HTMLInputElement | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editDraft, setEditDraft] = useState<{ notes: string; date: string; amount: string }>({
       notes: "",
@@ -3834,6 +4098,11 @@ function AppShell() {
         .reduce((s2, e) => s2 + e.amount, 0);
       return { spent, income, credits, net: income + credits - spent };
     }, [rows]);
+    const hasAnyExpenses = expenses.length > 0;
+    const dateFilterActive = Boolean(dateFrom || dateTo);
+    const categoryFilterActive = categoryFilter !== "all";
+    const searchFilterActive = Boolean(search.trim());
+    const hasAnyFilterActive = dateFilterActive || categoryFilterActive || searchFilterActive;
 
     const categoryBreakdown = useMemo(() => {
       const m = new Map<string, { count: number; spent: number; income: number; net: number }>();
@@ -3856,11 +4125,17 @@ function AppShell() {
       const querySearch = params.get("q");
       const queryFrom = params.get("from");
       const queryTo = params.get("to");
+      const queryFocusSearch = params.get("focusSearch");
 
       if (queryCategory) setCategoryFilter(queryCategory);
       if (querySearch !== null) setSearch(querySearch);
       if (queryFrom !== null) setDateFrom(queryFrom);
       if (queryTo !== null) setDateTo(queryTo);
+      if (queryFocusSearch === "1") {
+        requestAnimationFrame(() => {
+          searchInputRef.current?.focus();
+        });
+      }
     }, [location.search]);
 
     function startEditing(expense: Expense) {
@@ -3921,7 +4196,7 @@ function AppShell() {
     }
 
     return (
-      <div>
+      <div className="bb-expenses-page">
         <PageTitle
           title="Expenses"
           subtitle="Filter by category. Edit category per transaction. Export to Excel."
@@ -3938,12 +4213,12 @@ function AppShell() {
         />
 
         <div style={s.card}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div className="bb-expenses-controls" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+            <div className="bb-expenses-controls-left" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 900 }}>
                 <Filter size={16} /> Category
               </div>
-              <select style={{ ...s.select, width: 230 }} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+              <select style={{ ...s.select, width: 230, maxWidth: "100%" }} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
                 <option value="all">All categories</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -3953,14 +4228,16 @@ function AppShell() {
               </select>
 
               <input
-                style={{ ...s.input, width: 260 }}
+                ref={searchInputRef}
+                id="bb-expenses-search"
+                style={{ ...s.input, width: 260, maxWidth: "100%" }}
                 placeholder="Search description/source…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
 
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <div className="bb-expenses-summary" style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <div style={{ fontWeight: 900 }}>
                 Transactions: <span style={{ fontWeight: 980 }}>{rows.length}</span>
               </div>
@@ -3980,6 +4257,39 @@ function AppShell() {
           </div>
         </div>
 
+        {rows.length === 0 && hasAnyExpenses && hasAnyFilterActive ? (
+          <div
+            style={{
+              ...s.card,
+              marginTop: 12,
+              borderLeft: `6px solid ${PALETTE.warn}`,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ fontWeight: 820 }}>
+              Filters are hiding transactions
+              <div style={{ fontSize: 12, color: PALETTE.muted, fontWeight: 700, marginTop: 3 }}>
+                Clear date/category/search filters to show your full transaction list.
+              </div>
+            </div>
+            <button
+              style={s.btnPrimary}
+              onClick={() => {
+                setDateFrom("");
+                setDateTo("");
+                setCategoryFilter("all");
+                setSearch("");
+              }}
+            >
+              Show all transactions
+            </button>
+          </div>
+        ) : null}
+
         {categoryBreakdown.length > 0 ? (
           <div style={{ ...s.card, marginTop: 12 }}>
             <div style={{ fontWeight: 900, marginBottom: 8 }}>
@@ -3989,6 +4299,7 @@ function AppShell() {
               {categoryBreakdown.map((c) => (
                 <div
                   key={c.id}
+                  className="bb-expense-breakdown-row"
                   style={{
                     display: "grid",
                     gridTemplateColumns: "minmax(140px, 1fr) 100px 130px 130px 130px",
@@ -4023,8 +4334,8 @@ function AppShell() {
               const isEditing = editingId === e.id;
 
               return (
-                <div key={e.id} style={s.txCard}>
-                  <div style={s.txLeft}>
+                <div key={e.id} className="bb-tx-card" style={s.txCard}>
+                  <div className="bb-tx-left" style={s.txLeft}>
                     <div style={{ ...s.txIcon, background: (cat?.color ?? "#94a3b8") + "33" }}>
                       <span style={{ fontSize: 18 }}>{cat?.icon ?? "✨"}</span>
                     </div>
@@ -4052,7 +4363,7 @@ function AppShell() {
                               placeholder="Amount"
                             />
                           </div>
-                          <div style={s.txMeta}>
+                          <div className="bb-tx-meta" style={s.txMeta}>
                             <select
                               style={{ ...s.select, maxWidth: 240, padding: "6px 10px" }}
                               value={e.categoryId}
@@ -4088,7 +4399,7 @@ function AppShell() {
                       ) : (
                         <>
                           <div style={s.txTitle}>{e.notes}</div>
-                          <div style={s.txMeta}>
+                          <div className="bb-tx-meta" style={s.txMeta}>
                             <span>{e.date}</span>
                             <span>•</span>
 
@@ -4144,7 +4455,7 @@ function AppShell() {
                     </div>
                   </div>
 
-                  <div style={s.txRight}>
+                  <div className="bb-tx-right" style={s.txRight}>
                     <div style={{ fontWeight: 980, color: isExpense ? PALETTE.text : PALETTE.good }}>
                       {isExpense ? "-" : "+"}
                       {formatMoney(Math.abs(e.amount))}
@@ -4699,7 +5010,14 @@ function AppShell() {
     }, [categories]);
 
     function save() {
-      setCategories(Object.values(draft));
+      const cleaned = Object.values(draft).map((item) => {
+        const name = sanitizeBrandText(item.name, "New Category", 32);
+        const icon = sanitizeCategoryIcon(item.icon, item.id, name) ?? "✨";
+        const fallbackColor = DEFAULT_CATEGORIES.find((c) => c.id === item.id)?.color ?? "#cbd5e1";
+        const color = sanitizeHexColor(item.color, fallbackColor);
+        return { id: item.id, name, icon, color };
+      });
+      setCategories(cleaned);
     }
 
     function addCategory() {
@@ -4956,8 +5274,6 @@ function AppShell() {
     const iconPresets = ["💜", "💎", "💰", "🏦", "🧠", "📊", "✨", "🚀", "🌸", "🎯", "🦋", "🔥"];
     const [draftBrandIcon, setDraftBrandIcon] = useState(brandIcon);
     const [draftAppTitle, setDraftAppTitle] = useState(appTitle);
-    const [draftAppSubtitle, setDraftAppSubtitle] = useState(appSubtitle);
-    const [draftPrimaryActionLabel, setDraftPrimaryActionLabel] = useState(primaryActionLabel);
     const [draftAppFont, setDraftAppFont] = useState<AppFontId>(appFont);
     const [draftHeadingFont, setDraftHeadingFont] = useState<HeadingFontId>(headingFont);
     const [draftUiRadius, setDraftUiRadius] = useState(uiRadius);
@@ -4970,21 +5286,17 @@ function AppShell() {
     useEffect(() => {
       setDraftBrandIcon(brandIcon);
       setDraftAppTitle(appTitle);
-      setDraftAppSubtitle(appSubtitle);
-      setDraftPrimaryActionLabel(primaryActionLabel);
       setDraftAppFont(appFont);
       setDraftHeadingFont(headingFont);
       setDraftUiRadius(uiRadius);
       setDraftUiShadow(uiShadow);
       setDraftUiGlass(uiGlass);
       setDraftUiMotionMs(uiMotionMs);
-    }, [brandIcon, appTitle, appSubtitle, primaryActionLabel, appFont, headingFont, uiRadius, uiShadow, uiGlass, uiMotionMs]);
+    }, [brandIcon, appTitle, appFont, headingFont, uiRadius, uiShadow, uiGlass, uiMotionMs]);
 
     const brandDirty =
       draftBrandIcon !== brandIcon ||
       draftAppTitle !== appTitle ||
-      draftAppSubtitle !== appSubtitle ||
-      draftPrimaryActionLabel !== primaryActionLabel ||
       draftAppFont !== appFont ||
       draftHeadingFont !== headingFont ||
       draftUiRadius !== uiRadius ||
@@ -5054,8 +5366,6 @@ function AppShell() {
     function saveBrandingDraft() {
       setBrandIcon(draftBrandIcon);
       setAppTitle(draftAppTitle.slice(0, 48));
-      setAppSubtitle(draftAppSubtitle.slice(0, 90));
-      setPrimaryActionLabel(draftPrimaryActionLabel.slice(0, 40));
       setAppFont(sanitizeAppFont(draftAppFont));
       setHeadingFont(sanitizeHeadingFont(draftHeadingFont));
       setUiRadius(clampNumber(draftUiRadius, 8, 28, DEFAULT_UI_RADIUS));
@@ -5109,28 +5419,6 @@ function AppShell() {
                   value={draftAppTitle}
                   onChange={(e) => setDraftAppTitle(e.target.value.slice(0, 48))}
                   placeholder="My Budget Hub"
-                />
-              </div>
-              <div>
-                <div style={{ fontSize: 12, color: PALETTE.muted, fontWeight: 800, marginBottom: 6 }}>
-                  Subtitle
-                </div>
-                <input
-                  style={s.input}
-                  value={draftAppSubtitle}
-                  onChange={(e) => setDraftAppSubtitle(e.target.value.slice(0, 90))}
-                  placeholder="Family finances and goals"
-                />
-              </div>
-              <div>
-                <div style={{ fontSize: 12, color: PALETTE.muted, fontWeight: 800, marginBottom: 6 }}>
-                  Primary action text
-                </div>
-                <input
-                  style={s.input}
-                  value={draftPrimaryActionLabel}
-                  onChange={(e) => setDraftPrimaryActionLabel(e.target.value.slice(0, 40))}
-                  placeholder="Primary action"
                 />
               </div>
               <div>
@@ -5223,8 +5511,6 @@ function AppShell() {
                   onClick={() => {
                     setDraftBrandIcon(brandIcon);
                     setDraftAppTitle(appTitle);
-                    setDraftAppSubtitle(appSubtitle);
-                    setDraftPrimaryActionLabel(primaryActionLabel);
                     setDraftAppFont(appFont);
                     setDraftHeadingFont(headingFont);
                     setDraftUiRadius(uiRadius);
@@ -5269,6 +5555,7 @@ function AppShell() {
                 <div style={{ display: "grid", gap: 8 }}>
                   {allThemePresets.map((preset) => {
                     const selected = activeThemePresetId === preset.id;
+                    const displayLabel = preset.id.startsWith("custom_") ? `${preset.label} (Saved)` : preset.label;
                     return (
                       <button
                         key={preset.id}
@@ -5280,7 +5567,7 @@ function AppShell() {
                         }}
                         onClick={() => applyThemePreset(preset)}
                       >
-                        <span>{preset.label}</span>
+                        <span>{displayLabel}</span>
                       </button>
                     );
                   })}
@@ -5417,9 +5704,6 @@ function AppShell() {
                 <div className="bb-section-title" style={{ fontWeight: 950 }}>
                   {draftAppTitle || "Budget Bestie"}
                 </div>
-                <div style={{ color: PALETTE.muted, fontSize: 12, fontWeight: 700 }}>
-                  {draftAppSubtitle || "Pastel finance tool (paste + files)"}
-                </div>
               </div>
             </div>
             <div
@@ -5432,7 +5716,7 @@ function AppShell() {
                 justifyContent: "space-between",
               }}
             >
-              <span style={{ fontWeight: 800 }}>{draftPrimaryActionLabel || "Primary action"}</span>
+              <span style={{ fontWeight: 800 }}>Accent</span>
               <span
                 style={{
                   borderRadius: 999,
@@ -5958,6 +6242,78 @@ function AppShell() {
       interactiveCategoryId === "all" ? "All categories" : catById.get(interactiveCategoryId)?.name ?? "Category";
     const selectedMonthName = interactiveMonth === "all" ? "All months" : monthLabel(interactiveMonth);
     const selectedMerchantName = interactiveMerchant === "all" ? "All merchants" : interactiveMerchant;
+    const performanceCardStyle = (() => {
+      const roseLike = activeThemePresetId === "rose_mist" || activeThemePresetId === "frost_lilac";
+      const mainLine = chartTheme.pie[0] ?? chartTheme.trend;
+      const avgLine = chartTheme.pie[1] ?? chartTheme.trendSoft;
+
+      if (themeMode === "dark") {
+        return {
+          cardBackground: `linear-gradient(180deg, ${colorWithAlpha(PALETTE.panel2, 0.95)} 0%, ${colorWithAlpha(PALETTE.panel, 0.96)} 100%)`,
+          cardBorder: colorWithAlpha(chartTheme.trendSoft, 0.34),
+          plotBackground: colorWithAlpha(PALETTE.bg, 0.44),
+          plotBorder: colorWithAlpha(chartTheme.trendSoft, 0.28),
+          stripeFill: colorWithAlpha(chartTheme.band, 0.2),
+          stripeLine: colorWithAlpha(chartTheme.band, 0.52),
+          mainLine,
+          avgLine,
+          badgeBackground: `linear-gradient(180deg, ${colorWithAlpha(chartTheme.pie[2] ?? chartTheme.trendSoft, 0.86)} 0%, ${colorWithAlpha(chartTheme.pie[0] ?? chartTheme.trend, 0.84)} 100%)`,
+          badgeText: "#081629",
+          badgeSub: "rgba(8, 22, 41, 0.74)",
+          tabInactiveBg: colorWithAlpha(PALETTE.card, 0.92),
+          tabActiveBg: "linear-gradient(180deg, #111111 0%, #050505 100%)",
+          legend: [
+            { label: "Theory", color: chartTheme.pie[2] ?? chartTheme.trendSoft },
+            { label: "Practice", color: chartTheme.pie[0] ?? chartTheme.trend },
+            { label: "Lexicon", color: chartTheme.pie[1] ?? chartTheme.trendSoft },
+          ],
+        };
+      }
+
+      if (roseLike) {
+        return {
+          cardBackground: `linear-gradient(180deg, ${colorWithAlpha(PALETTE.panel2, 0.96)} 0%, ${colorWithAlpha(PALETTE.panel, 0.94)} 100%)`,
+          cardBorder: colorWithAlpha(chartTheme.pie[1] ?? chartTheme.trendSoft, 0.42),
+          plotBackground: colorWithAlpha("#ffffff", 0.7),
+          plotBorder: colorWithAlpha(chartTheme.pie[0] ?? chartTheme.trend, 0.28),
+          stripeFill: colorWithAlpha(chartTheme.pie[2] ?? chartTheme.band, 0.16),
+          stripeLine: colorWithAlpha(chartTheme.pie[1] ?? chartTheme.trendSoft, 0.56),
+          mainLine: chartTheme.pie[0] ?? "#e2a6cd",
+          avgLine: chartTheme.pie[1] ?? "#bcaeea",
+          badgeBackground: `linear-gradient(180deg, ${colorWithAlpha(chartTheme.pie[3] ?? chartTheme.pie[0] ?? chartTheme.trend, 0.88)} 0%, ${colorWithAlpha(chartTheme.pie[2] ?? chartTheme.pie[1] ?? chartTheme.trendSoft, 0.84)} 100%)`,
+          badgeText: "#2b1b3e",
+          badgeSub: "rgba(43, 27, 62, 0.72)",
+          tabInactiveBg: colorWithAlpha("#ffffff", 0.86),
+          tabActiveBg: "linear-gradient(180deg, #161616 0%, #0a0a0a 100%)",
+          legend: [
+            { label: "Theory", color: chartTheme.pie[1] ?? "#bcaeea" },
+            { label: "Practice", color: chartTheme.pie[0] ?? "#e2a6cd" },
+            { label: "Lexicon", color: chartTheme.pie[2] ?? "#d8bae8" },
+          ],
+        };
+      }
+
+      return {
+        cardBackground: "linear-gradient(180deg, rgba(249,248,252,0.95) 0%, rgba(244,241,250,0.95) 100%)",
+        cardBorder: PALETTE.border,
+        plotBackground: "rgba(255,255,255,0.6)",
+        plotBorder: PALETTE.border,
+        stripeFill: colorWithAlpha(chartTheme.band, 0.2),
+        stripeLine: colorWithAlpha(chartTheme.band, 0.58),
+        mainLine,
+        avgLine,
+        badgeBackground: `linear-gradient(180deg, ${colorWithAlpha(chartTheme.pie[0] ?? chartTheme.trend, 0.86)} 0%, ${colorWithAlpha(chartTheme.pie[2] ?? chartTheme.trendSoft, 0.8)} 100%)`,
+        badgeText: "#1f132f",
+        badgeSub: "rgba(31, 19, 47, 0.75)",
+        tabInactiveBg: "rgba(255,255,255,0.86)",
+        tabActiveBg: "linear-gradient(180deg, #131313 0%, #060606 100%)",
+        legend: [
+          { label: "Theory", color: chartTheme.pie[2] ?? "#bfc4ff" },
+          { label: "Practice", color: chartTheme.pie[0] ?? "#f0b6c8" },
+          { label: "Lexicon", color: chartTheme.pie[1] ?? "#e5b8d8" },
+        ],
+      };
+    })();
 
     function setForecastHorizonMonths(raw: number) {
       if (!Number.isFinite(raw)) return;
@@ -6410,12 +6766,12 @@ function AppShell() {
     }
 
     return (
-      <div>
+      <div className="bb-reports-page">
         <PageTitle
           title="Reports"
           subtitle="Pie + trends + weekly/monthly summaries."
           right={
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <div className="bb-reports-header-controls" style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button
                 style={excludeInvestingSavingsFromCharts ? s.btnPrimary : s.btnSecondary}
                 onClick={() => setExcludeInvestingSavingsFromCharts((prev) => !prev)}
@@ -6566,6 +6922,7 @@ function AppShell() {
               {budgetVarianceRows.slice(0, 8).map((row) => (
                 <div
                   key={row.categoryId}
+                  className="bb-report-variance-row"
                   style={{
                     display: "grid",
                     gridTemplateColumns: "minmax(120px, 1fr) 120px 120px 120px 110px",
@@ -6648,11 +7005,8 @@ function AppShell() {
             style={{
               ...s.card,
               borderRadius: 24,
-              background:
-                themeMode === "dark"
-                  ? `linear-gradient(180deg, ${colorWithAlpha(PALETTE.card, 0.92)} 0%, ${colorWithAlpha(PALETTE.panel, 0.88)} 100%)`
-                  : `linear-gradient(180deg, rgba(249,248,252,0.95) 0%, rgba(244,241,250,0.95) 100%)`,
-              border: `1px solid ${PALETTE.border}`,
+              background: performanceCardStyle.cardBackground,
+              border: `1px solid ${performanceCardStyle.cardBorder}`,
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
@@ -6672,7 +7026,7 @@ function AppShell() {
                             justifyContent: "center",
                             borderRadius: 14,
                             padding: "8px 12px",
-                            background: "linear-gradient(180deg, #131313 0%, #060606 100%)",
+                            background: performanceCardStyle.tabActiveBg,
                             border: "1px solid rgba(255,255,255,0.16)",
                           }
                         : {
@@ -6681,7 +7035,7 @@ function AppShell() {
                             justifyContent: "center",
                             borderRadius: 14,
                             padding: "8px 12px",
-                            background: themeMode === "dark" ? colorWithAlpha(PALETTE.card, 0.82) : "rgba(255,255,255,0.86)",
+                            background: performanceCardStyle.tabInactiveBg,
                           }
                     }
                     type="button"
@@ -6694,11 +7048,7 @@ function AppShell() {
             </div>
 
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 8 }}>
-              {[
-                { label: "Theory", color: "#bfc4ff" },
-                { label: "Practice", color: "#f0b6c8" },
-                { label: "Lexicon", color: "#e5b8d8" },
-              ].map((entry) => (
+              {performanceCardStyle.legend.map((entry) => (
                 <div key={entry.label} style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 760 }}>
                   <span
                     style={{
@@ -6723,8 +7073,8 @@ function AppShell() {
                     height: 330,
                     borderRadius: 18,
                     overflow: "hidden",
-                    background: themeMode === "dark" ? colorWithAlpha(PALETTE.panel2, 0.44) : "rgba(255,255,255,0.6)",
-                    border: `1px solid ${PALETTE.border}`,
+                    background: performanceCardStyle.plotBackground,
+                    border: `1px solid ${performanceCardStyle.plotBorder}`,
                     padding: 8,
                   }}
                 >
@@ -6732,8 +7082,8 @@ function AppShell() {
                     <ComposedChart data={weekly} margin={{ top: 10, right: 12, left: 8, bottom: 6 }}>
                       <defs>
                         <pattern id="bbPerfStripe" width="9" height="9" patternUnits="userSpaceOnUse">
-                          <rect width="9" height="9" fill={colorWithAlpha("#eff1ff", themeMode === "dark" ? 0.08 : 0.35)} />
-                          <line x1="1" y1="0" x2="1" y2="9" stroke={colorWithAlpha("#b4bcff", themeMode === "dark" ? 0.45 : 0.8)} strokeWidth="1.1" />
+                          <rect width="9" height="9" fill={performanceCardStyle.stripeFill} />
+                          <line x1="1" y1="0" x2="1" y2="9" stroke={performanceCardStyle.stripeLine} strokeWidth="1.1" />
                         </pattern>
                       </defs>
                       <CartesianGrid stroke={PALETTE.border} strokeDasharray="3 6" vertical={false} />
@@ -6755,8 +7105,8 @@ function AppShell() {
                       />
                       {performanceMidWeek ? <ReferenceLine x={performanceMidWeek} stroke={PALETTE.border} strokeDasharray="4 4" /> : null}
                       <Area type="monotone" dataKey="avg" stroke="transparent" fill="url(#bbPerfStripe)" />
-                      <Line type="monotone" dataKey="value" stroke="#efb4c8" strokeWidth={2.5} dot={false} />
-                      <Line type="monotone" dataKey="avg" stroke="#b8bcff" strokeWidth={2.5} dot={false} />
+                      <Line type="monotone" dataKey="value" stroke={performanceCardStyle.mainLine} strokeWidth={2.5} dot={false} />
+                      <Line type="monotone" dataKey="avg" stroke={performanceCardStyle.avgLine} strokeWidth={2.5} dot={false} />
                       <Brush dataKey="week" height={18} stroke="#0b0b0b" travellerWidth={10} />
                     </ComposedChart>
                   </ResponsiveContainer>
@@ -6769,14 +7119,14 @@ function AppShell() {
                     width: 120,
                     borderRadius: 16,
                     padding: "10px 12px",
-                    background: "linear-gradient(180deg, rgba(247,203,223,0.95) 0%, rgba(243,195,219,0.88) 100%)",
+                    background: performanceCardStyle.badgeBackground,
                     border: "1px solid rgba(255,255,255,0.7)",
-                    boxShadow: "0 10px 24px rgba(180, 125, 150, 0.2)",
+                    boxShadow: themeMode === "dark" ? "0 12px 30px rgba(8, 20, 42, 0.45)" : "0 10px 24px rgba(180, 125, 150, 0.2)",
                     pointerEvents: "none",
                   }}
                 >
-                  <div style={{ fontWeight: 980, fontSize: 28, lineHeight: 1 }}>{performanceBadge}</div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(31, 19, 47, 0.75)", marginTop: 4 }}>Recent movement</div>
+                  <div style={{ fontWeight: 980, fontSize: 28, lineHeight: 1, color: performanceCardStyle.badgeText }}>{performanceBadge}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: performanceCardStyle.badgeSub, marginTop: 4 }}>Recent movement</div>
                 </div>
               </div>
             )}
@@ -7567,6 +7917,8 @@ function AppShell() {
     setExcludeCCPayFromCharts(defaults.excludeCCPayFromCharts);
     setExcludeInvestingSavingsFromCharts(defaults.excludeInvestingSavingsFromCharts);
     setLearnedCategoryRules({});
+    setSavingsTrackerGoal(defaults.savingsTrackerGoal);
+    setSavingsTrackerSaved(defaults.savingsTrackerSaved);
   }
 
   function setQuickThemeMode(nextMode: "light" | "dark") {
@@ -7666,14 +8018,14 @@ function AppShell() {
             style={{ display: "grid", gap: 10 }}
           >
             <div>
-              <div style={{ fontSize: 12, color: PALETTE.muted, fontWeight: 800, marginBottom: 6 }}>Email</div>
+              <div style={{ fontSize: 12, color: PALETTE.muted, fontWeight: 800, marginBottom: 6 }}>Username</div>
               <input
                 style={s.input}
-                type="email"
-                autoComplete="email"
-                placeholder="you@example.com"
-                value={cloudEmail}
-                onChange={(e) => setCloudEmail(e.target.value)}
+                type="text"
+                autoComplete="username"
+                placeholder="Enter username"
+                value={cloudUsername}
+                onChange={(e) => setCloudUsername(e.target.value)}
                 disabled={isCloudSyncPaused}
               />
             </div>
@@ -7683,7 +8035,7 @@ function AppShell() {
                 style={s.input}
                 type="password"
                 autoComplete={cloudAuthMode === "create" ? "new-password" : "current-password"}
-                placeholder={cloudAuthMode === "create" ? "At least 6 characters" : "Enter your password"}
+                placeholder="Enter your password"
                 value={cloudPassword}
                 onChange={(e) => setCloudPassword(e.target.value)}
                 disabled={isCloudSyncPaused}
@@ -7691,15 +8043,11 @@ function AppShell() {
             </div>
 
             <button style={s.btnPrimary} type="submit" disabled={isCloudAuthBusy || isCloudSyncPaused}>
-              {isCloudAuthBusy ? "Please wait..." : cloudAuthMode === "create" ? "Create Cloud Account" : "Sign In"}
+              {isCloudAuthBusy ? "Please wait..." : cloudAuthMode === "create" ? "Create Account" : "Sign In"}
             </button>
           </form>
 
           {cloudError ? <div style={{ marginTop: 10, color: PALETTE.warn, fontSize: 12, fontWeight: 700 }}>{cloudError}</div> : null}
-
-          <div style={{ marginTop: 12, color: PALETTE.muted, fontSize: 12, fontWeight: 700 }}>
-            Cloud mode enabled via `VITE_ENABLE_CLOUD_SYNC=true` + Supabase keys.
-          </div>
         </div>
       </div>
     );
@@ -7782,7 +8130,7 @@ function AppShell() {
                 style={s.input}
                 type="password"
                 autoComplete={authMode === "create" ? "new-password" : "current-password"}
-                placeholder={authMode === "create" ? "At least 6 characters" : "Enter password"}
+                placeholder="Enter password"
                 value={authPassword}
                 onChange={(e) => {
                   setAuthError("");
@@ -7881,6 +8229,87 @@ function AppShell() {
         .bb-mobile-tabs {
           display: none;
         }
+        .bb-mobile-overview-card {
+          display: none;
+        }
+        .bb-mobile-smooth-stack {
+          display: grid;
+          gap: 14px;
+          margin-top: 14px;
+          width: 100%;
+          max-width: 100%;
+        }
+        .bb-mobile-soft-card,
+        .bb-mobile-activity-row {
+          border: 1px solid ${PALETTE.border};
+          border-radius: 22px;
+          background: ${colorWithAlpha(PALETTE.card, themeMode === "dark" ? 0.92 : 0.84)};
+          box-shadow: ${themeMode === "dark" ? "0 12px 24px rgba(0,0,0,0.28)" : "0 10px 22px rgba(41, 31, 47, 0.09)"};
+        }
+        .bb-mobile-soft-card {
+          padding: 14px;
+        }
+        .bb-mobile-progress-track {
+          height: 10px;
+          border-radius: 999px;
+          overflow: hidden;
+          background: ${colorWithAlpha(PALETTE.accent, 0.16)};
+        }
+        .bb-mobile-progress-fill {
+          height: 100%;
+          border-radius: 999px;
+          background: linear-gradient(90deg, ${colorWithAlpha(PALETTE.accent, 0.95)} 0%, ${colorWithAlpha(PALETTE.accent, 0.72)} 100%);
+        }
+        .bb-mobile-activity-row {
+          padding: 10px 12px;
+          display: grid;
+          grid-template-columns: 42px minmax(0, 1fr) auto;
+          gap: 10px;
+          align-items: center;
+        }
+        .bb-mobile-activity-icon {
+          width: 42px;
+          height: 42px;
+          border-radius: 14px;
+          display: grid;
+          place-items: center;
+          background: ${colorWithAlpha(PALETTE.accent, 0.17)};
+          font-size: 18px;
+        }
+        .bb-mobile-savings-grid {
+          display: grid;
+          gap: 10px;
+          grid-template-columns: 1fr;
+          width: 100%;
+          max-width: 100%;
+        }
+        .bb-mobile-goal-card {
+          background: linear-gradient(170deg, ${colorWithAlpha(PALETTE.accent, 0.2)} 0%, ${colorWithAlpha(PALETTE.card, themeMode === "dark" ? 0.94 : 0.94)} 74%);
+          min-height: 196px;
+          width: 100%;
+        }
+        .bb-mobile-goal-icon {
+          width: 34px;
+          height: 34px;
+          border-radius: 11px;
+          display: grid;
+          place-items: center;
+          background: ${colorWithAlpha(PALETTE.accent, 0.2)};
+          color: ${PALETTE.text};
+        }
+        .bb-savings-inputs {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+        .bb-savings-buttons {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+        .bb-savings-buttons button {
+          width: 100%;
+        }
 
         @media (max-width: 1250px){
           .bb-shell {
@@ -7892,6 +8321,7 @@ function AppShell() {
           .bb-main .bb-page-title {
             font-size: 26px !important;
           }
+          .bb-mobile-smooth-stack { max-width: 100%; }
         }
 
         @media (max-width: 1020px){
@@ -7937,6 +8367,26 @@ function AppShell() {
           .bb-main {
             padding-bottom: 82px !important;
           }
+          .bb-mobile-overview-card {
+            display: block !important;
+            border-radius: 28px !important;
+            padding: 16px !important;
+            background: linear-gradient(165deg, ${colorWithAlpha(PALETTE.accent, 0.66)} 0%, ${colorWithAlpha(PALETTE.accent, 0.46)} 100%) !important;
+          }
+          .bb-mobile-smooth-stack {
+            display: grid !important;
+            gap: 12px;
+            margin-top: 12px;
+          }
+          .bb-mobile-savings-grid {
+            max-width: 100%;
+          }
+          .bb-dashboard-page .bb-mobile-overview-card * {
+            color: #27154a !important;
+          }
+          .bb-dashboard-page .bb-mobile-overview-card > div:first-child {
+            color: ${colorWithAlpha("#2b1854", 0.78)} !important;
+          }
           .bb-top-bar {
             display: grid !important;
             grid-template-columns: 1fr auto !important;
@@ -7975,6 +8425,55 @@ function AppShell() {
             width: 100% !important;
             min-width: 0 !important;
           }
+          .bb-expenses-controls,
+          .bb-expenses-controls-left,
+          .bb-expenses-summary,
+          .bb-reports-header-controls {
+            width: 100% !important;
+          }
+          .bb-expenses-controls-left > * {
+            flex: 1 1 100%;
+          }
+          .bb-expenses-controls-left select,
+          .bb-expenses-controls-left input,
+          .bb-reports-header-controls select {
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+          .bb-expenses-summary {
+            justify-content: flex-start !important;
+            gap: 8px !important;
+            font-size: 12px !important;
+          }
+          .bb-expense-breakdown-row,
+          .bb-report-variance-row {
+            grid-template-columns: 1fr !important;
+            gap: 4px !important;
+            align-items: start !important;
+          }
+          .bb-expense-breakdown-row > div,
+          .bb-report-variance-row > div {
+            white-space: normal !important;
+          }
+          .bb-tx-card {
+            padding: 10px !important;
+          }
+          .bb-tx-right {
+            width: 100% !important;
+            margin-left: 0 !important;
+            justify-content: flex-start !important;
+            flex-wrap: wrap !important;
+          }
+          .bb-tx-meta {
+            gap: 6px !important;
+          }
+          .bb-tx-meta select {
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+          .bb-reports-page .recharts-legend-wrapper {
+            max-width: 100% !important;
+          }
           .bb-mobile-tabs {
             display: grid !important;
             grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -8011,6 +8510,18 @@ function AppShell() {
             width: 17px;
             height: 17px;
           }
+          .bb-savings-inputs {
+            grid-template-columns: 1fr;
+          }
+          .bb-savings-buttons {
+            grid-template-columns: 1fr 1fr;
+          }
+        }
+
+        @media (max-width: 560px){
+          .bb-savings-buttons {
+            grid-template-columns: 1fr;
+          }
         }
       `}</style>
 
@@ -8022,7 +8533,6 @@ function AppShell() {
               <div className="bb-brand-title" style={s.brandTitle}>
                 {appTitle || "Budget Bestie"}
               </div>
-              <div style={s.brandSub}>{appSubtitle || "Pastel finance tool (paste + files)"}</div>
             </div>
           </div>
 
@@ -8039,7 +8549,9 @@ function AppShell() {
           <div className="bb-account-card" style={{ ...s.card, marginTop: 4 }}>
             <div style={{ fontSize: 12, color: PALETTE.muted, fontWeight: 800 }}>Signed in as</div>
             <div style={{ fontWeight: 900, marginTop: 4, marginBottom: 8 }}>
-              {cloudRuntimeEnabled ? cloudUser?.email || activeAccount?.name : activeAccount?.name}
+              {cloudRuntimeEnabled
+                ? cloudUser?.email?.split("@")[0] || activeAccount?.name
+                : activeAccount?.name}
             </div>
             <button style={s.btnSecondary} onClick={() => void signOutEverything()}>
               {cloudRuntimeEnabled ? "Sign out" : "Switch account"}
@@ -8106,10 +8618,18 @@ function AppShell() {
             </div>
 
             <div className="bb-top-actions" style={s.topActions}>
-              <button style={s.iconPill} title="Search">
+              <button
+                style={s.iconPill}
+                title="Search transactions"
+                onClick={() => openExpensesWithFilters({ search: "", focusSearch: true })}
+              >
                 <Search size={18} />
               </button>
-              <button style={s.iconPill} title="Notifications">
+              <button
+                style={s.iconPill}
+                title="Insights"
+                onClick={() => nav("/assistant")}
+              >
                 <Bell size={18} />
               </button>
               <button style={s.iconPill} title="Personalize" onClick={() => nav("/personalize")}>

@@ -19,6 +19,7 @@ dist-ssr
 # Budget Bestie local/private data snapshots
 .budget-bestie-state.json
 .budget-bestie-state*.json
+.recovered-best-state.json
 
 # Local Cloudflare metadata/cache
 .wrangler/
