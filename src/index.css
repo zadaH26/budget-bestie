@@ -1,3 +1,11 @@
+@import "tailwindcss";
+
+html {
+  color-scheme: light dark;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 html, body, #root {
   height: 100%;
   width: 100%;
@@ -8,12 +16,39 @@ html, body, #root {
 
 * { box-sizing: border-box; }
 
+body {
+  min-width: 320px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+::selection {
+  background: rgba(183, 135, 230, 0.28);
+}
+
 /* Keep app full-width on laptop screens (including 13-inch) */
 #root {
   max-width: none;
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1020px) {
   .bb-shell {
     grid-template-columns: 1fr !important;
   }

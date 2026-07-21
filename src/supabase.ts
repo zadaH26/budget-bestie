@@ -16,6 +16,14 @@ export const supabase = isSupabaseConfigured
     })
   : null;
 
+export async function verifyCloudConnection(): Promise<void> {
+  if (!isSupabaseConfigured || !SUPABASE_URL) return;
+  await fetch(`${SUPABASE_URL.replace(/\/+$/, "")}/auth/v1/health`, {
+    cache: "no-store",
+    mode: "no-cors",
+  });
+}
+
 export type CloudUser = {
   id: string;
   email: string | null;

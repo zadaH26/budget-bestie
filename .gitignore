@@ -20,6 +20,7 @@ dist-ssr
 .budget-bestie-state.json
 .budget-bestie-state*.json
 .recovered-best-state.json
+.local-backups/
 
 # Local Cloudflare metadata/cache
 .wrangler/
