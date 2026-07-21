@@ -1,161 +1,154 @@
 # Budget Bestie
 
-Budget Bestie is a personal finance analytics app built as a portfolio-grade Data Analyst project.
+Budget Bestie is a personal-finance web app for tracking transactions, budgets, spending patterns, and savings goals.
 
-It converts messy bank statements into structured data, then produces decision-ready insights:
-- per-user accounts with isolated data
-- import from paste/CSV/XLSX (RBC/AMEX and similar formats)
-- duplicate detection (exact + likely duplicates)
-- category learning and editable transactions
-- interactive analytics, budgeting, and savings planning
-- export pack (CSV/XLSX/JSON/TXT)
+Live app: [https://budget-bestie-app.pages.dev/](https://budget-bestie-app.pages.dev/)
 
-## Analyst Portfolio Positioning
+## What It Does
 
-This project demonstrates end-to-end analyst skills:
-- data ingestion and cleaning
-- sign normalization and quality controls
-- dimensional analytics model design
-- KPI definition and variance analysis
-- dashboard storytelling and action-oriented recommendations
+Budget Bestie helps users understand where their money is going by turning transactions into clean, visual reports.
 
-Use these artifacts in interviews:
-- SQL model: `analytics/schema.sql`
-- analyst query pack: `analytics/queries.sql`
-- KPI definitions: `docs/kpi-dictionary.md`
-- case-study narrative: `docs/case-study-template.md`
+Core features:
+
+- Create a personal budget workspace in the browser
+- Add, edit, categorize, and delete transactions
+- Import transaction data from CSV/XLSX-style bank statements
+- Detect duplicate transactions and clean messy imported data
+- Build budgets by category
+- View interactive reports with charts, filters, and spending summaries
+- Track savings goals and forecast savings progress
+- Customize the app theme, colors, fonts, and branding
+- Export data as CSV/XLSX for analysis
+
+## Why I Built It
+
+I built this project as a portfolio-grade personal finance dashboard. The goal was to combine product design, frontend engineering, and data analysis in one deployed application.
+
+This project demonstrates:
+
+- React component architecture
+- TypeScript state management
+- Data cleaning and transaction normalization
+- Interactive data visualization
+- Responsive UI design
+- Static deployment with Cloudflare Pages
+- Privacy-aware local storage
 
 ## Tech Stack
 
-- React + TypeScript
-- Recharts for interactive analytics visuals
-- PapaParse + SheetJS for statement ingestion
-- Optional cloud sync/auth via Supabase
+- React
+- TypeScript
+- Vite
+- Tailwind CSS / custom CSS styling
+- Recharts
+- PapaParse
+- SheetJS / XLSX
+- Cloudflare Pages
+- Cloudflare Workers / Durable Objects
+- Optional Supabase cloud sync support
+
+## Current Deployment Mode
+
+The public deployed app currently uses account-scoped Cloudflare sync.
+
+That means:
+
+- A visitor can create a free account with a username and password
+- The same username/password can load that account from another browser or device
+- Account data is stored in a Cloudflare Worker Durable Object
+- The app still keeps a local browser copy for speed and resilience
+- Private user data is not committed to GitHub
+
+Supabase cloud sync support also exists in the codebase, but the current public deployment uses the Cloudflare account-sync worker.
 
 ## Project Structure
 
-- `src/App.tsx`: main application logic and UI
-- `src/supabase.ts`: optional cloud auth/state integration
-- `analytics/schema.sql`: star schema for BI workflows
-- `analytics/queries.sql`: reusable SQL analysis queries
-- `docs/kpi-dictionary.md`: metric definitions and formulas
-- `docs/case-study-template.md`: portfolio case-study format
+```text
+src/
+  app/              App shell, shared context, layout, app-level components
+  components/       Reusable UI components
+  pages/            Page-level screens such as dashboard, expenses, reports, budgets
+  pages/reports/    Modular reports and analytics components
+  styles/           Shared styling
+  types/            TypeScript domain types
+  utils/            Data parsing, persistence, account, and transaction helpers
 
-## Local Run
+analytics/          SQL schema and analyst query examples
+docs/               KPI dictionary and project case-study notes
+scripts/            Deployment and maintenance scripts
+cloudflare/         Cloudflare worker/state-sync files
+```
+
+## Run Locally
+
+Install dependencies:
 
 ```bash
 npm install
+```
+
+Start the development server:
+
+```bash
 npm run dev
 ```
 
-## Build
+Build the production version:
 
 ```bash
 npm run build
 ```
 
-## Free Deploy (Cloudflare Pages, Static-Only)
-
-This app can run as a static website with local browser storage only.
-That is the lowest-cost mode.
-
-1. Local-only free-safe mode is forced by deploy script:
+Run lint checks:
 
 ```bash
-npm run deploy:pages:free -- budget-bestie
+npm run lint
 ```
 
-2. Free cross-browser sync mode (still no paid API keys) uses a Cloudflare state worker:
+Run tests:
 
 ```bash
-npm run deploy:pages:state-sync -- budget-bestie-app
+npm run test
 ```
 
-2. Login once to Cloudflare from your terminal:
+## Deployment
+
+The app is deployed with Cloudflare Pages.
+
+Production build:
 
 ```bash
-npx wrangler login
+npm run build
 ```
 
-Notes:
-- You can keep editing after publish: change code, push/update, redeploy.
-- If you ever want to stop public use, delete or disable the Pages project from Cloudflare dashboard.
-- Fast stop command from terminal:
+Deploy:
 
 ```bash
-npm run stop:pages:public -- budget-bestie
+npx wrangler pages deploy dist --project-name budget-bestie-app --branch main --commit-dirty=true
 ```
 
-- Your local private copy still works with `npm run dev`.
+## Privacy Notes
 
-## Cloud Account Mode (Supabase, cross-device)
+Private data files and local backups should not be committed to GitHub.
 
-Use this only when you want real account sync across devices.
+Ignored private files include:
 
-1. Copy `.env.cloud.example` to `.env.cloud` and fill values:
+- `.budget-bestie-state.json`
+- `.budget-bestie-state*.json`
+- `.local-backups/`
+- `.env`
+- `.env.cloud`
 
-```bash
-cp .env.cloud.example .env.cloud
-```
+The public repository should contain source code only, not personal transaction data or secret API keys.
 
-2. Deploy cloud mode:
+## Resume Summary
 
-```bash
-npm run deploy:pages:cloud -- budget-bestie .env.cloud
-```
+Built and deployed Budget Bestie, a React and TypeScript personal-finance dashboard with transaction management, budgeting tools, interactive reports, data import/export, savings forecasting, customizable themes, and Cloudflare Pages deployment.
 
-3. If you want zero-cost local-only mode again:
+## Future Improvements
 
-```bash
-npm run deploy:pages:free -- budget-bestie
-```
-
-## Optional Supabase Cloud Mode
-
-Create `.env`:
-
-```bash
-VITE_ENABLE_CLOUD_SYNC=true
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_ANON_KEY=...
-
-# Optional: state API endpoint. Leave empty for no-server mode.
-VITE_STATE_ENDPOINT=
-```
-
-Run this SQL in Supabase:
-
-```sql
-create table if not exists public.user_states (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  state jsonb not null default '{}'::jsonb,
-  updated_at timestamptz not null default now()
-);
-
-alter table public.user_states enable row level security;
-
-create policy "user can read own state"
-on public.user_states
-for select
-using (auth.uid() = user_id);
-
-create policy "user can insert own state"
-on public.user_states
-for insert
-with check (auth.uid() = user_id);
-
-create policy "user can update own state"
-on public.user_states
-for update
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
-```
-
-## CI
-
-GitHub Actions workflow is included to run:
-- lint
-- build
-- tests
-
-on push and pull request.
+- Connect a valid Supabase project for cross-device account sync
+- Add a public sample/demo dataset that does not contain private data
+- Add more automated tests for transaction parsing and report calculations
+- Add screenshots/GIFs to the README for recruiters
+- Split more report analytics into smaller focused components
