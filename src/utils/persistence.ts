@@ -180,6 +180,7 @@ export function saveLocalSessionUserId(userId: string | null) {
 }
 
 export async function loadPersistedAppStateFromApi(): Promise<PersistedAppState | null> {
+  if (ACCOUNT_ENDPOINT_SYNC_ENABLED) return null;
   if (!STATE_ENDPOINT) return null;
   try {
     const response = await fetch(STATE_ENDPOINT);
@@ -193,6 +194,7 @@ export async function loadPersistedAppStateFromApi(): Promise<PersistedAppState 
 }
 
 export async function savePersistedAppStateToApi(state: PersistedAppState) {
+  if (ACCOUNT_ENDPOINT_SYNC_ENABLED) return;
   if (!STATE_ENDPOINT) return;
   const response = await fetch(STATE_ENDPOINT, {
     method: "POST",
