@@ -5,7 +5,7 @@ import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { getCloudUser, isSupabaseConfigured, loadCloudStateJson, saveCloudStateJson, signInCloud, signOutCloud, signUpCloud, supabase, verifyCloudConnection } from "../supabase";
 import type { CloudUser } from "../supabase";
-import { ACCOUNT_ENDPOINT_SYNC_ENABLED, DARK_PALETTE, DEFAULT_UI_GLASS, DEFAULT_UI_MOTION_MS, DEFAULT_UI_RADIUS, DEFAULT_UI_SHADOW, LIGHT_PALETTE, PALETTE, STATE_ENDPOINT_SYNC_ENABLED, THEME_PRESETS, UI_THEME, appFontStack, chartStyleForTheme, clampNumber, cloudErrorSummary, colorWithAlpha, createAccountInSyncApi, defaultAccountData, directionHintFromDescription, ensureStateHasDefaultAccount, formatMoney, guessDisplayNameFromEmail, headingFontStack, isCloudQuotaLimitError, isInvestingOrSavingsTransaction, isPersistedStateEmpty, isPersistedStateMoreComplete, loadAccountFromSyncApi, loadLocalHistoryStates, loadLocalSessionUserId, loadPersistedAppStateFromApi, loadPersistedAppStateFromLocalStorage, makeStyles, mergePersistedStateCandidates, normalizeAccountId, parsePersistedAppState, persistedStateExpenseCount, resolveActiveThemePresetId, resolvePreferredCurrentAccount, sanitizeAccountData, sanitizeHexColor, saveAccountToSyncApi, saveLocalSessionUserId, savePersistedAppStateToApi, savePersistedAppStateToLocalStorage, setPalette, setUiTheme, shouldExcludeImportedTransaction, sourceFamilyFromLabel, transactionNameKey, triggerFileDownload, uid, usernameToCloudEmails } from "./appCore";
+import { ACCOUNT_ENDPOINT_SYNC_ENABLED, DARK_PALETTE, DEFAULT_UI_GLASS, DEFAULT_UI_MOTION_MS, DEFAULT_UI_RADIUS, DEFAULT_UI_SHADOW, LIGHT_PALETTE, PALETTE, STATE_ENDPOINT_SYNC_ENABLED, THEME_PRESETS, UI_THEME, appFontStack, chartStyleForTheme, clampNumber, cloudErrorSummary, colorWithAlpha, createAccountInSyncApi, defaultAccountData, directionHintFromDescription, ensureStateHasDefaultAccount, formatMoney, guessDisplayNameFromEmail, headingFontStack, isCloudQuotaLimitError, isInvestingOrSavingsTransaction, isPersistedStateEmpty, isPersistedStateMoreComplete, loadAccountFromSyncApi, loadLocalHistoryStates, loadLocalSessionUserId, loadPersistedAppStateFromApi, loadPersistedAppStateFromLocalStorage, makeStyles, mergePersistedStateCandidates, normalizeAccountId, parsePersistedAppState, persistedStateExpenseCount, resolveActiveThemePresetId, sanitizeAccountData, sanitizeHexColor, saveAccountToSyncApi, saveLocalSessionUserId, savePersistedAppStateToApi, savePersistedAppStateToLocalStorage, setPalette, setUiTheme, shouldExcludeImportedTransaction, sourceFamilyFromLabel, transactionNameKey, triggerFileDownload, uid, usernameToCloudEmails } from "./appCore";
 import type { Alert, AppFontId, Budget, Category, Expense, HeadingFontId, PersistedAppState, StoredAccount, ThemePreset } from "./appCore";
 import { BudgetBestieProvider } from "./BudgetBestieContext";
 import { RailItem, TopTabItem } from "./uiComponents";
@@ -297,21 +297,9 @@ export function AppShell() {
         ],
         browserSessionUserId
       );
-      const browserSessionResolved =
-        browserSessionUserId && localState.accounts[browserSessionUserId]
-          ? resolvePreferredCurrentAccount(browserSessionUserId, localState.accounts)
-          : null;
-      if (browserSessionUserId && !browserSessionResolved) {
-        saveLocalSessionUserId(null);
-      }
-      const stateCurrentUserId =
-        localState.currentUserId && localState.accounts[localState.currentUserId] ? localState.currentUserId : null;
-      const resolvedCurrentUserId = browserSessionResolved ?? stateCurrentUserId;
       setAccounts(localState.accounts);
-      setCurrentUserId(resolvedCurrentUserId);
-      if (resolvedCurrentUserId) {
-        saveLocalSessionUserId(resolvedCurrentUserId);
-      }
+      setCurrentUserId(null);
+      saveLocalSessionUserId(null);
       setIsStorageReady(true);
       return;
     }
@@ -407,20 +395,8 @@ export function AppShell() {
 
       if (cancelled) return;
       setAccounts(chosenState.accounts);
-      const browserSessionResolved =
-        browserSessionUserId && chosenState.accounts[browserSessionUserId]
-          ? resolvePreferredCurrentAccount(browserSessionUserId, chosenState.accounts)
-          : null;
-      if (browserSessionUserId && !browserSessionResolved) {
-        saveLocalSessionUserId(null);
-      }
-      const stateCurrentUserId =
-        chosenState.currentUserId && chosenState.accounts[chosenState.currentUserId] ? chosenState.currentUserId : null;
-      const resolvedCurrentUserId = browserSessionResolved ?? stateCurrentUserId;
-      setCurrentUserId(resolvedCurrentUserId);
-      if (resolvedCurrentUserId) {
-        saveLocalSessionUserId(resolvedCurrentUserId);
-      }
+      setCurrentUserId(null);
+      saveLocalSessionUserId(null);
       setIsStorageReady(true);
     }
 
