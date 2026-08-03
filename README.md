@@ -22,7 +22,9 @@ Core features:
 
 ## Why I Built It
 
-I built this project as a portfolio-grade personal finance dashboard. The goal was to combine product design, frontend engineering, and data analysis in one deployed application.
+I built Budget Bestie because I wanted more control over my own finances and a clearer way to be responsible with my money. Looking only at bank transactions made it hard to understand patterns, budgets, categories, and progress in one place. I also found that many personal finance apps either required paid subscriptions or did not give me the exact workflow and visibility I wanted.
+
+So I decided to build my own tool: a personal finance workspace that could import messy transaction files, clean and organize the data, show dashboards, track budgets, monitor savings, and help turn raw spending activity into decisions. The project became both a practical tool for managing money and a portfolio-grade analytics app that combines product design, frontend engineering, and data analysis in one deployed application.
 
 This project demonstrates:
 
